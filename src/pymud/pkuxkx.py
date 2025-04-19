@@ -1,34 +1,49 @@
-# 示例脚本：如何在PyMud中玩PKUXKX
+# Example script: How to play PKUXKX in PyMud
 
 import webbrowser
-from pymud import Alias, Trigger, SimpleCommand, Timer, SimpleTrigger, SimpleAlias
 
-# 在PyMud中，使用#load {filename}可以加载对应的配置作为脚本文件以提供支撑。支持多脚本加载
-# 本示例脚本对PyMud支持的变量(Variable)、触发器(Trigger，包含单行与多行触发)、别名(Alias)、定时器(Timer)、命令(Command，本示例中使用了SimpleCommand子类)都进行了代码示例
-# 使用#load {filename}加载的配置文件中，若有一个类型名为Coniguration，则在#load操作时，会自动创建此类型；若没有Configuration类，则仅将文件引入
-# 例如，加载本文件指定的配置，则使用 #load pymud.pkuxkx即可
+from pymud import Alias, SimpleAlias, SimpleCommand, SimpleTrigger, Timer, Trigger
 
-# PyMud中，触发器Trigger、别名Alias、命令Command，都是匹配对象(MatchObject)的子类，使用同一种处理逻辑
-# 匹配对象，意味着有匹配的pattern。在匹配对象成功后，会调用对象的onSuccess方法
-# Trigger、Alias仅有成功，即仅onSuccess方法会被调用，该方法参数参考了MushClient，会传递name, line, wildcards三个参数，含义与MushClient相同；
+# In PyMud, use #load {filename} to load the corresponding configuration as a script file for support. Multiple script loading is supported
+# This example script provides code examples for all PyMud-supported variables (Variable), triggers (Trigger, including single-line and multi-line triggers), aliases (Alias), timers (Timer), and commands (Command, this example uses the SimpleCommand subclass)
+# When using #load {filename} to load a configuration file, if there is a class type named Configuration, this type will be automatically created during the #load operation; if there is no Configuration class, the file will only be imported
+# For example, to load the configuration specified in this file, use #load pymud.pkuxkx
+
+# In PyMud, Trigger, Alias, Command are all subclasses of the matching object (MatchObject) and use the same processing logic
+# Matching objects have patterns to match. After a matching object succeeds, the object's onSuccess method will be called
+# Trigger and Alias only have success, meaning only the onSuccess method will be called. This method's parameters reference MushClient, passing name, line, wildcards three parameters with the same meaning as in MushClient
 
 
 class Configuration:
-
-    # hpbrief long情况下的含义
+    # Meaning under hpbrief long
     HP_KEYS = (
-        "combat_exp", "potential", "max_neili", "neili", "max_jingli", "jingli", 
-        "max_qi", "eff_qi", "qi", "max_jing", "eff_jing", "jing", 
-        "vigour/qi", "vigour/yuan", "food", "water", "fighting", "busy"
-        )
+        "combat_exp",
+        "potential",
+        "max_neili",
+        "neili",
+        "max_jingli",
+        "jingli",
+        "max_qi",
+        "eff_qi",
+        "qi",
+        "max_jing",
+        "eff_jing",
+        "jing",
+        "vigour/qi",
+        "vigour/yuan",
+        "food",
+        "water",
+        "fighting",
+        "busy",
+    )
 
-    # 类的构造函数，传递参数session，是会话本身
+    # Class constructor, passing parameter session, which is the session itself
     def __init__(self, session) -> None:
         self.session = session
         self._triggers = {}
         self._commands = {}
-        self._aliases  = {}
-        self._timers   = {}
+        self._aliases = {}
+        self._timers = {}
 
         self._initTriggers()
         self._initCommands()
@@ -36,58 +51,75 @@ class Configuration:
         self._initTimers()
 
     def _initTriggers(self):
-        '''
-        初始化触发器。
-        本示例中创建了2个触发器，分别对应fullme的链接触发自动打开浏览器访问该网址，以及hpbrief命令的触发器
-        '''
-        # Trigger的构造函数中，给定的位置参数仅有session(会话)和pattern(匹配模式)两个，其他所有参数都是使用命名参数进行实现
-        # 支持的命名参数详细可参见 BaseObject与MatchObject 的构造方法，此处简单列举
-        # id         : 唯一标识，不指定时自动生成
-        # group      : 组名，不指定时为空
-        # enabled    : 使能状态，默认True
-        # priority   : 优先级，默认100，越小越高
-        # oneShot    : 单次匹配，默认False
-        # ignoreCase : 忽略大小写，默认False
-        # isRegExp   : 正则表达式模式，默认True
-        # keepEval   : 持续匹配，默认False
-        # raw        : 原始匹配方式，默认False。原始匹配方式下，不对VT100下的ANSI颜色进行解码，因此可以匹配颜色；正常匹配仅匹配文本
-        
-        # 1. fullme的链接对应的触发器，匹配URL
-        # 当匹配成功后，调用ontri_webpage
-        self._triggers["tri_webpage"] = self.tri_webpage = Trigger(self.session, id = 'tri_webpage', patterns = r'^http://fullme.pkuxkx.net/robot.php.+$', group = "sys", onSuccess =  lambda id, line, wildcards: webbrowser.open(line))
-        # 2. fullme的链接对应的触发器，因为要进行多行匹配（3行），因此匹配模式pattern为3个正则表达式模式构成的元组（所有列表类型均可识别），无需像MushClient一样要指定multiline标识和linesToMatch数量
-        # 当匹配成功后，调用ontri_hpbrief
-        # 特别说明：此处的hpbrief触发匹配，需要set hpbrief long后才可以支持
-        self._triggers["tri_hp"]      = self.tri_hp      = Trigger(self.session, id = 'tri_hpbrief', patterns = (r'^[> ]*#(\d+.?\d*[KM]?),(\d+),(\d+),(\d+),(\d+),(\d+)$', r'^[> ]*#(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$', r'^[> ]*#(\d+),(\d+),(-?\d+),(-?\d+),(\d+),(\d+)$',), group = "sys", onSuccess = self.ontri_hpbrief)
-        
-        # 3. 现在支持简单Trigger了，例如
-        self._triggers["tri_gem"] = SimpleTrigger(self.session ,r'^[> ]*从.+身上.+[◎☆★].+', "pack gem", group = "sys")
+        """
+        Initialize triggers.
+        This example creates 2 triggers, corresponding to automatically opening the browser to access the URL for fullme links, and triggers for the hpbrief command
+        """
+        # In the Trigger constructor, only session (session) and pattern (matching pattern) are given as positional parameters, all other parameters are implemented using named parameters
+        # For detailed supported named parameters, refer to the constructors of BaseObject and MatchObject, here's a simple list
+        # id         : Unique identifier, automatically generated if not specified
+        # group      : Group name, empty if not specified
+        # enabled    : Enabled status, default True
+        # priority   : Priority, default 100, smaller is higher
+        # oneShot    : Single match, default False
+        # ignoreCase : Ignore case, default False
+        # isRegExp   : Regular expression mode, default True
+        # keepEval   : Continuous matching, default False
+        # raw        : Raw matching mode, default False. In raw matching mode, ANSI colors under VT100 are not decoded, so colors can be matched; normal matching only matches text
+
+        # 1. Trigger for fullme link, matching URL
+        # When matching is successful, calls ontri_webpage
+        self._triggers["tri_webpage"] = self.tri_webpage = Trigger(
+            self.session,
+            id="tri_webpage",
+            patterns=r"^http://fullme.pkuxkx.net/robot.php.+$",
+            group="sys",
+            onSuccess=lambda id, line, wildcards: webbrowser.open(line),
+        )
+        # 2. Trigger for fullme link, because it requires multi-line matching (3 lines), the matching pattern is a tuple of 3 regular expression patterns (all list types can be identified), no need to specify multiline flag and linesToMatch quantity like in MushClient
+        # When matching is successful, calls ontri_hpbrief
+        # Special note: This hpbrief trigger matching requires set hpbrief long to support
+        self._triggers["tri_hp"] = self.tri_hp = Trigger(
+            self.session,
+            id="tri_hpbrief",
+            patterns=(
+                r"^[> ]*#(\d+.?\d*[KM]?),(\d+),(\d+),(\d+),(\d+),(\d+)$",
+                r"^[> ]*#(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$",
+                r"^[> ]*#(\d+),(\d+),(-?\d+),(-?\d+),(\d+),(\d+)$",
+            ),
+            group="sys",
+            onSuccess=self.ontri_hpbrief,
+        )
+
+        # 3. Now simple Trigger is supported, for example
+        self._triggers["tri_gem"] = SimpleTrigger(
+            self.session, r"^[> ]*从.+身上.+[◎☆★].+", "pack gem", group="sys"
+        )
 
         self.session.addTriggers(self._triggers)
 
-
     def _initCommands(self):
-        '''初始化命令，本示例中创建了1个命令，支持hpbrief命令'''
+        """Initialize commands, this example creates 1 command, supporting the hpbrief command"""
 
-        # Command是异步执行的命令，可以理解为Alias+Trigger+Timer的组合。在MUD中发出一条命令后，会有成功、失败、超时的不同状态，在这三种状态下，会分别调用onSuccess、onFailure、onTimeout方法
-        # 举个Command的应用例子说明：加入把移动（s/e/n/w等等）实现为一个Command。
-        # 1. 当向某个方向移动时，成功的时候会移动到下一个房间；
-        # 2. 不成功的时候，会出现“这个方向没有出路”等描述；
-        # 3. 而当角色处于晕倒状态时，移动命令是不会有任何反应的，超出设定超时时间之后，会调用onTimeout
-        # 在上述实现情况下，我们在执行命令时，可以明确的根据命令的执行结果再判断下一步该做什么
-        # 本示例使用了简单命令SimpleCommand，其在MatchObject的基础上，增加了以下参数：
-        # 1. succ_tri: 命令执行成功时的触发器，不能为空
-        # 2. fail_tri: 命令执行失败时的触发器，可以为空
-        # 3. retry_tri: 需要重新尝试命令的触发器，可以为空（仍以移动为例，当向某个方向移动，出现“你现在正忙着呢”之后，可以在等待2s之后，再次尝试该命令，知道到达最大尝试次数
+        # Command is an asynchronously executed command, can be understood as a combination of Alias+Trigger+Timer. After issuing a command in MUD, there will be different states of success, failure, timeout, and in these three states, onSuccess, onFailure, onTimeout methods will be called respectively
+        # Here's an example of Command application: Let's say movement (s/e/n/w, etc.) is implemented as a Command.
+        # 1. When moving in a certain direction, if successful, you will move to the next room;
+        # 2. If unsuccessful, there will be descriptions like "There is no exit in this direction";
+        # 3. When the character is in an unconscious state, movement commands will not have any response, and after exceeding the set timeout, onTimeout will be called
+        # In the above implementation, when executing commands, we can clearly determine what to do next based on the command execution results
+        # This example uses SimpleCommand, which adds the following parameters based on MatchObject:
+        # 1. succ_tri: Trigger when the command executes successfully, cannot be empty
+        # 2. fail_tri: Trigger when the command fails, can be empty
+        # 3. retry_tri: Trigger when the command needs to be retried, can be empty (still using movement as an example, when moving in a certain direction, if "You are busy now" appears, you can try the command again after waiting 2s, until reaching the maximum number of attempts
 
-        # 命令可以同步调用，也可以在异步函数（async）中使用await语法异步调用
-        # 例如，下面的hpbrief可以在这样使用：
+        # Commands can be called synchronously, or can be called asynchronously using await syntax in asynchronous functions (async)
+        # For example, the hpbrief below can be used like this:
         # self.session.exec_command("hpbrief")
         # self.session.exec_command_after(2, "hpbrief")
         # await self.cmd_hpbrief.execute("hpbrief")
 
-        # 异步实现意味着，在函数实现过程中可以以循环实现，而不是以回调实现，有利于代码的可读性
-        # 假设已经实现了一个 cmd_move 的 Command，现在要从ct 执行"s;s;w"行走指令到达春来茶馆，然后根据当前的hpbrief结果判断是否需要drink，然后走回中央广场，可以在函数中这样实现：
+        # Asynchronous implementation means that the process can be implemented in a loop rather than a callback, which is good for code readability
+        # Assuming a Command cmd_move has been implemented, now to go from ct to execute "s;s;w" walking instructions to reach Chunlai Teahouse, then determine whether to drink based on the current hpbrief results, then walk back to the central square, you can implement it in the function like this:
         # async def gotodrink(self):
         #     for step in "s;s;w".split(";"):
         #         await self.cmd_move.execute(step)
@@ -100,27 +132,39 @@ class Configuration:
         #     for step in "e;n;n".split(";"):
         #         await self.cmd_move.execute(step)
 
-
-        self._commands['cmd_hpbrief']    = self.cmd_hpbrief     = SimpleCommand(self.session, id = "cmd_hpbrief", patterns = "^hpbrief$", succ_tri = self.tri_hp, group = "status", onSuccess = self.oncmd_hpbrief)
+        self._commands["cmd_hpbrief"] = self.cmd_hpbrief = SimpleCommand(
+            self.session,
+            id="cmd_hpbrief",
+            patterns="^hpbrief$",
+            succ_tri=self.tri_hp,
+            group="status",
+            onSuccess=self.oncmd_hpbrief,
+        )
         self.session.addCommands(self._commands)
 
     def _initAliases(self):
-        '''初始化别名，本示例中创建了1个别名，是get xxx from corpse'''
+        """Initialize aliases, this example creates 1 alias, which is get xxx from corpse"""
 
-        #  get xxx from corpse的别名操作，匹配成功后会自动调用getfromcorpse函数
-        #  例如， gp silver 相当于 get silver from corpse
-        self._aliases['ali_get'] = Alias(self.session, r"^gp\s(.+)$", id = "ali_get", onSuccess = self.getfromcorpse)
+        # get xxx from corpse alias operation, when matching is successful, the getfromcorpse function will be automatically called
+        # For example, gp silver is equivalent to get silver from corpse
+        self._aliases["ali_get"] = Alias(
+            self.session, r"^gp\s(.+)$", id="ali_get", onSuccess=self.getfromcorpse
+        )
 
-        # 3. 现在支持简单Alias了，在其中也可以支持#wait（缩写为#wa操作）等待，当然，Trigger也支持
-        # 从扬州中心广场到西门的行走，每步中间插入100ms等待
-        self._aliases["ali_yz_xm"] = SimpleAlias(self.session ,'^yz_xm$', "w;#wa 100;w;#wa 100;w;#wa 100;w", group = "sys")
+        # 3. Now simple Alias is supported, it can also support #wait (abbreviated as #wa) waiting, of course, Trigger also supports
+        # Walking from Yangzhou Central Square to West Gate, inserting a 100ms wait between each step
+        self._aliases["ali_yz_xm"] = SimpleAlias(
+            self.session, "^yz_xm$", "w;#wa 100;w;#wa 100;w;#wa 100;w", group="sys"
+        )
 
         self.session.addAliases(self._aliases)
 
     def _initTimers(self):
-        '''初始化定时器，本示例中创建了1个定时器，每隔2秒打印信息'''
+        """Initialize timers, this example creates 1 timer, printing information every 2 seconds"""
 
-        self._timers["tm_test"] = self.tm_test = Timer(self.session, timeout = 2, id = "tm_test", onSuccess = self.onTimer)
+        self._timers["tm_test"] = self.tm_test = Timer(
+            self.session, timeout=2, id="tm_test", onSuccess=self.onTimer
+        )
         self.session.addTimers(self._timers)
 
     def getfromcorpse(self, name, line, wildcards):
@@ -128,29 +172,58 @@ class Configuration:
         self.session.writeline(cmd)
 
     def onTimer(self, name, *args, **kwargs):
-        self.session.info("每2秒都会打印本信息", "定时器测试")
+        self.session.info(
+            "This information will be printed every 2 seconds", "Timer Test"
+        )
 
     def ontri_hpbrief(self, name, line, wildcards):
         self.session.setVariables(self.HP_KEYS, wildcards)
 
     def oncmd_hpbrief(self, name, cmd, line, wildcards):
-        # 为了节省服务器资源，应使用hpbrief来代替hp指令
-        # 但是hpbrief指令的数据看起来太麻烦，所以将hpbrief的一串数字输出成类似hp的样式
-        # ┌───个人状态────────────────────┬─────────────────────────────┐
-        # │【精神】 1502    / 1502     [100%]    │【精力】 4002    / 4002    (+   0)    │
-        # │【气血】 2500    / 2500     [100%]    │【内力】 5324    / 5458    (+   0)    │
-        # │【真气】 0       / 0        [  0%]    │【禅定】 101%               [正常]    │
-        # │【食物】 222     / 400      [缺食]    │【潜能】 36,955                       │
-        # │【饮水】 247     / 400      [缺水]    │【经验】 2,341,005                    │
+        # To save server resources, you should use hpbrief instead of the hp command
+        # But the hpbrief command data looks too complicated, so format the hpbrief number string output to look like hp
+        # ┌───Personal Status────────────────────┬─────────────────────────────┐
+        # │【Spirit】 1502    / 1502     [100%]    │【Energy】 4002    / 4002    (+   0)    │
+        # │【Health】 2500    / 2500     [100%]    │【Inner Force】 5324    / 5458    (+   0)    │
+        # │【Qi】 0       / 0        [  0%]    │【Meditation】 101%               [Normal]    │
+        # │【Food】 222     / 400      [Hungry]    │【Potential】 36,955                       │
+        # │【Water】 247     / 400      [Thirsty]    │【Experience】 2,341,005                    │
         # ├─────────────────────────────┴─────────────────────────────┤
-        # │【状态】 健康、怒                                                             │
-        # └────────────────────────────────────────────北大侠客行────────┘
-        var1 = self.session.getVariables(("jing", "effjing", "maxjing", "jingli", "maxjingli"))
-        line1 = "【精神】 {0:<8} [{5:3.0f}%] / {1:<8} [{2:3.0f}%]  |【精力】 {3:<8} / {4:<8} [{6:3.0f}%]".format(var1[0], var1[1], 100 * float(var1[1]) / float(var1[2]), var1[3], var1[4], 100 * float(var1[0]) / float(var1[2]), 100 * float(var1[3]) / float(var1[4]))
+        # │【Status】 Healthy, Angry                                                             │
+        # └────────────────────────────────────────────PKUXKX────────┘
+        var1 = self.session.getVariables(
+            ("jing", "effjing", "maxjing", "jingli", "maxjingli")
+        )
+        line1 = "【Spirit】 {0:<8} [{5:3.0f}%] / {1:<8} [{2:3.0f}%]  |【Energy】 {3:<8} / {4:<8} [{6:3.0f}%]".format(
+            var1[0],
+            var1[1],
+            100 * float(var1[1]) / float(var1[2]),
+            var1[3],
+            var1[4],
+            100 * float(var1[0]) / float(var1[2]),
+            100 * float(var1[3]) / float(var1[4]),
+        )
         var2 = self.session.getVariables(("qi", "effqi", "maxqi", "neili", "maxneili"))
-        line2 = "【气血】 {0:<8} [{5:3.0f}%] / {1:<8} [{2:3.0f}%]  |【内力】 {3:<8} / {4:<8} [{6:3.0f}%]".format(var2[0], var2[1], 100 * float(var2[1]) / float(var2[2]), var2[3], var2[4], 100 * float(var2[0]) / float(var2[2]), 100 * float(var2[3]) / float(var2[4]))
-        var3 = self.session.getVariables(("food", "water", "exp", "pot", "fighting", "busy"))
-        line3 = "【食物】 {0:<4} 【饮水】{1:<4} 【经验】{2:<9} 【潜能】{3:<10}【{4}】【{5}】".format(var3[0], var3[1], var3[2], var3[3],  "未战斗" if var3[4] == "0" else "战斗中", "不忙" if var3[5] == "0" else "忙")
-        self.session.info(line1, "状态")
-        self.session.info(line2, "状态")
-        self.session.info(line3, "状态")
+        line2 = "【Health】 {0:<8} [{5:3.0f}%] / {1:<8} [{2:3.0f}%]  |【Inner Force】 {3:<8} / {4:<8} [{6:3.0f}%]".format(
+            var2[0],
+            var2[1],
+            100 * float(var2[1]) / float(var2[2]),
+            var2[3],
+            var2[4],
+            100 * float(var2[0]) / float(var2[2]),
+            100 * float(var2[3]) / float(var2[4]),
+        )
+        var3 = self.session.getVariables(
+            ("food", "water", "exp", "pot", "fighting", "busy")
+        )
+        line3 = "【Food】 {0:<4} 【Water】{1:<4} 【Experience】{2:<9} 【Potential】{3:<10}【{4}】【{5}】".format(
+            var3[0],
+            var3[1],
+            var3[2],
+            var3[3],
+            "Not Fighting" if var3[4] == "0" else "Fighting",
+            "Not Busy" if var3[5] == "0" else "Busy",
+        )
+        self.session.info(line1, "Status")
+        self.session.info(line2, "Status")
+        self.session.info(line3, "Status")

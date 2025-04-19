@@ -1,33 +1,28 @@
 # External Libraries
-from unicodedata import east_asian_width
-from wcwidth import wcwidth
-import time, re, logging
-
+import re
+import time
 from typing import Iterable
+from unicodedata import east_asian_width
+
 from prompt_toolkit import ANSI
 from prompt_toolkit.application import get_app
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.formatted_text import to_formatted_text, fragment_list_to_text
-from prompt_toolkit.formatted_text.base import OneStyleAndTextTuple
-from prompt_toolkit.layout.processors import Processor, Transformation
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.document import Document
-from prompt_toolkit.data_structures import Point
-from prompt_toolkit.layout.controls import UIContent
-from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
-from prompt_toolkit.selection import SelectionType
 from prompt_toolkit.buffer import Buffer, ValidationState
-
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.document import Document
 from prompt_toolkit.filters import (
     FilterOrBool,
 )
 from prompt_toolkit.formatted_text import (
     StyleAndTextTuples,
+    fragment_list_to_text,
     to_formatted_text,
 )
-from prompt_toolkit.formatted_text.utils import fragment_list_to_text
+from prompt_toolkit.formatted_text.base import OneStyleAndTextTuple
+from prompt_toolkit.formatted_text.utils import (
+    fragment_list_to_text,
+    fragment_list_width,
+)
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding.key_bindings import KeyBindingsBase
 from prompt_toolkit.layout.containers import (
@@ -37,26 +32,25 @@ from prompt_toolkit.layout.containers import (
 from prompt_toolkit.layout.controls import (
     BufferControl,
     FormattedTextControl,
+    UIContent,
 )
 from prompt_toolkit.layout.processors import (
     Processor,
+    Transformation,
     TransformationInput,
-    Transformation
 )
+from prompt_toolkit.layout.screen import _CHAR_CACHE, Screen, WritePosition
+from prompt_toolkit.layout.utils import explode_text_fragments
 from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
+from prompt_toolkit.selection import SelectionType
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import Button, MenuContainer, MenuItem
 from prompt_toolkit.widgets.base import Border
-
-from prompt_toolkit.layout.screen import _CHAR_CACHE, Screen, WritePosition
-from prompt_toolkit.layout.utils import explode_text_fragments
-from prompt_toolkit.formatted_text.utils import (
-    fragment_list_to_text,
-    fragment_list_width,
-)
+from wcwidth import wcwidth
 
 from .settings import Settings
+
 
 class MudFormatProcessor(Processor):
     "在BufferControl中显示ANSI格式的处理器"
@@ -66,7 +60,7 @@ class MudFormatProcessor(Processor):
         self.FULL_BLOCKS = set("▂▃▅▆▇▄█")
         self.SINGLE_LINES = set("┌└├┬┼┴╭╰─")
         self.DOUBLE_LINES = set("╔╚╠╦╪╩═")
-        self.ALL_COLOR_REGX  = re.compile(r"(?:\[[\d;]+m)+")
+        self.ALL_COLOR_REGX = re.compile(r"(?:\[[\d;]+m)+")
         self.AVAI_COLOR_REGX = re.compile(r"(?:\[[\d;]+m)+(?!$)")
         self._color_start = ""
         self._color_correction = False
@@ -84,13 +78,13 @@ class MudFormatProcessor(Processor):
                 elif ch in self.DOUBLE_LINES:
                     new_str.append("═")
                 else:
-                    new_str.append(' ')
+                    new_str.append(" ")
 
         return "".join(new_str)
-    
+
     def return_correction(self, line: str):
         return line.replace("\r", "").replace("\x00", "")
-    
+
     def tab_correction(self, line: str):
         return line.replace("\t", " " * Settings.client["tabstop"])
 
@@ -99,7 +93,7 @@ class MudFormatProcessor(Processor):
         line = self.return_correction(line)
         # 处理Tab(\r)符号（^I）
         line = self.tab_correction(line)
-        
+
         # 美化（解决中文英文在Console中不对齐的问题）
         if Settings.client["beautify"]:
             line = self.width_correction(line)
@@ -117,13 +111,13 @@ class MudFormatProcessor(Processor):
             while lineno > 0:
                 lastline = transformation_input.document.lines[lineno]
                 allcolors = self.ALL_COLOR_REGX.findall(lastline)
-                
+
                 if len(allcolors) == 0:
                     lineno = lineno - 1
 
                 elif len(allcolors) == 1:
                     colors = self.AVAI_COLOR_REGX.findall(lastline)
-                    
+
                     if len(colors) == 1:
                         line = f"{colors[0]}{line}"
                         break
@@ -142,6 +136,7 @@ class MudFormatProcessor(Processor):
 
         return Transformation(fragments)
 
+
 class SessionBuffer(Buffer):
     "继承自Buffer，为Session内容所修改，主要修改为只能在最后新增内容，并且支持分屏显示适配"
 
@@ -153,7 +148,7 @@ class SessionBuffer(Buffer):
         # 修改内容
         self.__text = ""
         self.__split = False
-        
+
     def _set_text(self, value: str) -> bool:
         """set text at current working_index. Return whether it changed."""
         original_value = self.__text
@@ -198,9 +193,9 @@ class SessionBuffer(Buffer):
         self.complete_state = None
         self.yank_nth_arg_state = None
         self.document_before_paste = None
-        
+
         # 添加内容时，不取消选择
-        #self.selection_state = None
+        # self.selection_state = None
 
         self.suggestion = None
         self.preferred_column = None
@@ -214,7 +209,7 @@ class SessionBuffer(Buffer):
     @property
     def split(self) -> bool:
         return self.__split
-    
+
     @split.setter
     def split(self, value: bool) -> None:
         self.__split = value
@@ -240,7 +235,7 @@ class SessionBuffer(Buffer):
     ) -> None:
         # 始终在最后增加内容
         self.text += data
-        
+
         # 分隔情况下，光标保持原位置不变，否则光标始终位于最后
         if not self.__split:
             # 若存在选择状态，则视情保留选择
@@ -262,7 +257,6 @@ class SessionBuffer(Buffer):
                 self.cursor_position = len(self.text)
         else:
             pass
-        
 
     def clear_half(self):
         "将Buffer前半段内容清除，并清除缓存"
@@ -272,12 +266,12 @@ class SessionBuffer(Buffer):
 
         del self.history
         self.history = InMemoryHistory()
-        
+
         self.text = ""
         self._set_text(new_text)
 
         self._document_cache.clear()
-        new_doc  = Document(text = new_text, cursor_position = len(new_text))
+        new_doc = Document(text=new_text, cursor_position=len(new_text))
         self.reset(new_doc, False)
         self.__split = False
 
@@ -291,10 +285,33 @@ class SessionBuffer(Buffer):
 
 
 class SessionBufferControl(BufferControl):
-    def __init__(self, buffer: SessionBuffer = None, input_processors = None, include_default_input_processors: bool = True, lexer: Lexer = None, preview_search: FilterOrBool = False, focusable: FilterOrBool = True, search_buffer_control = None, menu_position = None, focus_on_click: FilterOrBool = False, key_bindings: KeyBindingsBase = None):
+    def __init__(
+        self,
+        buffer: SessionBuffer = None,
+        input_processors=None,
+        include_default_input_processors: bool = True,
+        lexer: Lexer = None,
+        preview_search: FilterOrBool = False,
+        focusable: FilterOrBool = True,
+        search_buffer_control=None,
+        menu_position=None,
+        focus_on_click: FilterOrBool = False,
+        key_bindings: KeyBindingsBase = None,
+    ):
         # 将所属Buffer类型更改为SessionBuffer
         buffer = buffer or SessionBuffer()
-        super().__init__(buffer, input_processors, include_default_input_processors, lexer, preview_search, focusable, search_buffer_control, menu_position, focus_on_click, key_bindings)
+        super().__init__(
+            buffer,
+            input_processors,
+            include_default_input_processors,
+            lexer,
+            preview_search,
+            focusable,
+            search_buffer_control,
+            menu_position,
+            focus_on_click,
+            key_bindings,
+        )
         self.buffer = buffer
 
     # def create_content(
@@ -447,7 +464,7 @@ class SessionBufferControl(BufferControl):
                     # selecting text in Vi navigation mode. In navigation mode,
                     # the cursor can never be after the text, so the cursor
                     # will be repositioned automatically.)
-                    
+
                     if abs(buffer.cursor_position - index) > 1:
                         if buffer.selection_state is None:
                             buffer.start_selection(
@@ -464,8 +481,15 @@ class SessionBufferControl(BufferControl):
                     self._last_click_timestamp = time.time()
 
                     if double_click:
-                        start = buffer.document.translate_row_col_to_index(position.y, 0)
-                        end = buffer.document.translate_row_col_to_index(position.y + 1, 0) - 1
+                        start = buffer.document.translate_row_col_to_index(
+                            position.y, 0
+                        )
+                        end = (
+                            buffer.document.translate_row_col_to_index(
+                                position.y + 1, 0
+                            )
+                            - 1
+                        )
                         buffer.cursor_position = start
                         buffer.start_selection(selection_type=SelectionType.LINES)
                         buffer.cursor_position = end
@@ -497,18 +521,18 @@ class SessionBufferControl(BufferControl):
         b = self.buffer
         b.cursor_position += b.document.get_cursor_up_position()
 
-    def move_cursor_right(self, count = 1) -> None:
+    def move_cursor_right(self, count=1) -> None:
         b = self.buffer
         b.cursor_position += count
 
-    def move_cursor_left(self, count = 1) -> None:
+    def move_cursor_left(self, count=1) -> None:
         b = self.buffer
         b.cursor_position -= count
 
 
 class VSplitWindow(Window):
     "修改的分块窗口，向上翻页时，下半部保持最后数据不变"
- 
+
     def _copy_body(
         self,
         ui_content: UIContent,
@@ -524,8 +548,8 @@ class VSplitWindow(Window):
         always_hide_cursor: bool = False,
         has_focus: bool = False,
         align: WindowAlign = WindowAlign.LEFT,
-        get_line_prefix = None,
-        isNotMargin = True,
+        get_line_prefix=None,
+        isNotMargin=True,
     ):
         """
         Copy the UIContent into the output screen.
@@ -673,13 +697,13 @@ class VSplitWindow(Window):
 
         # Copy content.
         def copy() -> int:
-            y = -vertical_scroll_2        
+            y = -vertical_scroll_2
             lineno = vertical_scroll
-            
+
             total = write_position.height
             upper = (total - 1) // 2
             below = total - upper - 1
-            
+
             if lineno + total < line_count:
                 if isinstance(self.content, SessionBufferControl):
                     b = self.content.buffer
@@ -694,7 +718,7 @@ class VSplitWindow(Window):
                     y += 1
 
                 x = 0
-                x, y = copy_line([("","-"*width)], lineno, x, y, is_input=False)
+                x, y = copy_line([("", "-" * width)], lineno, x, y, is_input=False)
                 y += 1
 
                 lineno = line_count - below
@@ -707,7 +731,7 @@ class VSplitWindow(Window):
                     y += 1
 
                 return y
-                
+
             else:
                 if isNotMargin and isinstance(self.content, SessionBufferControl):
                     b = self.content.buffer
@@ -726,8 +750,6 @@ class VSplitWindow(Window):
                     lineno += 1
                     y += 1
                 return y
-        
-            
 
         copy()
 
@@ -806,7 +828,14 @@ class VSplitWindow(Window):
         ypos = write_position.ypos
 
         margin_write_position = WritePosition(xpos, ypos, width, write_position.height)
-        self._copy_body(margin_content, new_screen, margin_write_position, 0, width, isNotMargin=False)
+        self._copy_body(
+            margin_content,
+            new_screen,
+            margin_write_position,
+            0,
+            width,
+            isNotMargin=False,
+        )
 
     def _scroll_down(self) -> None:
         "向下滚屏，处理屏幕分隔"
@@ -821,7 +850,7 @@ class VSplitWindow(Window):
 
             b.exit_selection()
             cur_line = d.cursor_position_row
-            
+
             # # 向下滚动时，如果存在自动折行情况，要判断本行被折成了几行，在行内时要逐行移动（此处未调试好）
             # cur_col  = d.cursor_position_col
             # line = d.current_line
@@ -833,7 +862,6 @@ class VSplitWindow(Window):
             # wraplines = math.ceil(1.0 * line_width / screen_width)
 
             if cur_line < info.content_height:
-                
                 # if offset_y < wraplines:                                    # add
                 #     self.content.move_cursor_right(screen_width)            # add
                 # else:                                                       # add
@@ -852,7 +880,7 @@ class VSplitWindow(Window):
         if info is None:
             return
 
-        #if info.cursor_position.y >= 1:
+        # if info.cursor_position.y >= 1:
         if isinstance(self.content, SessionBufferControl):
             b = self.content.buffer
             d = b.document
@@ -876,10 +904,11 @@ class EasternButton(Button):
 
     def _get_text_fragments(self) -> StyleAndTextTuples:
         # 主要改动在这里
-        width = self.width - (
-            get_cwidth(self.left_symbol) + get_cwidth(self.right_symbol)
-        ) - (get_cwidth(self.text) - len(self.text))
-
+        width = (
+            self.width
+            - (get_cwidth(self.left_symbol) + get_cwidth(self.right_symbol))
+            - (get_cwidth(self.text) - len(self.text))
+        )
 
         text = (f"{{:^{width}}}").format(self.text)
 
@@ -892,10 +921,11 @@ class EasternButton(Button):
 
         return [
             ("class:button.arrow", self.left_symbol, handler),
-            #("[SetCursorPosition]", ""),
+            # ("[SetCursorPosition]", ""),
             ("class:button.text", text, handler),
             ("class:button.arrow", self.right_symbol, handler),
         ]
+
 
 class EasternMenuContainer(MenuContainer):
     "解决增加中文等东亚全宽字符后不对齐问题"
@@ -952,7 +982,11 @@ class EasternMenuContainer(MenuContainer):
                             )
                         else:
                             # 主要改动在这里，其他地方都未更改.
-                            adj_width = menu.width + 3 - (get_cwidth(item.text) - len(item.text))
+                            adj_width = (
+                                menu.width
+                                + 3
+                                - (get_cwidth(item.text) - len(item.text))
+                            )
                             yield (
                                 style,
                                 f" {item.text}".ljust(adj_width),
@@ -981,14 +1015,13 @@ class EasternMenuContainer(MenuContainer):
         return Window(FormattedTextControl(get_text_fragments), style="class:menu")
 
 
-
 class MenuItem:
     def __init__(
         self,
         text: str = "",
-        handler = None,
-        children = None,
-        shortcut = None,
+        handler=None,
+        children=None,
+        shortcut=None,
         disabled: bool = False,
     ) -> None:
         self.text = text
@@ -1017,7 +1050,7 @@ class DotDict(dict):
         .. code:: Python
 
             mydict = DotDict()
-            
+
             # 以下写内容访问等价
             mydict["key1"] = "value1"
             mydict.key1 = "value1"
@@ -1028,7 +1061,7 @@ class DotDict(dict):
     """
 
     def __getattr__(self, __key):
-        if (not __key in self.__dict__) and (not __key.startswith("__")):
+        if (__key not in self.__dict__) and (not __key.startswith("__")):
             return self.__getitem__(__key)
 
     def __setattr__(self, __name: str, __value):
@@ -1039,9 +1072,6 @@ class DotDict(dict):
 
     def __getstate__(self):
         return self
-    
+
     def __setstate__(self, state):
         self.update(state)
-
-
-        

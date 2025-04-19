@@ -1,18 +1,21 @@
 """
-MUD会话(session)中, 支持的对象列表
+Objects supported in MUD sessions
 """
 
-import asyncio, logging, re, importlib
-from abc import ABC, ABCMeta, abstractmethod
-from collections.abc import Iterable
+import asyncio
+import logging
+import re
 from collections import namedtuple
+from collections.abc import Iterable
 from typing import Any
+
 from .settings import Settings
+
 
 class CodeLine:
     """
-    PyMUD中可执行的代码块（单行），不应由脚本直接调用。
-    若脚本需要生成自己的代码块，应使用 CodeBlock。
+    Executable code block (single line) in PyMUD, should not be called directly by scripts.
+    If scripts need to generate their own code blocks, use CodeBlock instead.
     """
 
     @classmethod
@@ -22,7 +25,7 @@ class CodeLine:
         arg = ""
         brace_count, single_quote, double_quote = 0, 0, 0
 
-        if len(line)> 0:
+        if len(line) > 0:
             if line[0] == "#":
                 start_idx = 1
                 code_params.append("#")
@@ -37,7 +40,7 @@ class CodeLine:
                 elif ch == "}":
                     brace_count -= 1
                     if brace_count < 0:
-                        raise Exception("错误的代码块，大括号数量不匹配")
+                        raise Exception("Invalid code block, unmatched braces")
                     arg += ch
                 elif ch == "'":
                     if single_quote == 0:
@@ -51,7 +54,11 @@ class CodeLine:
                         double_quote = 0
 
                 elif ch == " ":
-                    if (brace_count == 0) and (double_quote == 0) and (single_quote == 0):
+                    if (
+                        (brace_count == 0)
+                        and (double_quote == 0)
+                        and (single_quote == 0)
+                    ):
                         code_params.append(arg)
                         arg = ""
                     else:
@@ -60,8 +67,8 @@ class CodeLine:
                     arg += ch
 
             if (single_quote > 0) or (double_quote > 0):
-                raise Exception("引号的数量不匹配")
-            
+                raise Exception("Unmatched quotes")
+
             if arg:
                 code_params.append(arg)
                 if arg[0] in ("@", "%"):
@@ -69,13 +76,17 @@ class CodeLine:
 
             syncmode = "dontcare"
             if len(code_params) >= 2:
-                if (code_params[0] == "#"):
+                if code_params[0] == "#":
                     if code_params[1] in ("gag", "replace"):
                         syncmode = "sync"
                     elif code_params[1] in ("wa", "wait"):
                         syncmode = "async"
-        
-            return syncmode, hasvar, tuple(code_params), 
+
+            return (
+                syncmode,
+                hasvar,
+                tuple(code_params),
+            )
         else:
             return syncmode, hasvar, tuple()
 
@@ -94,7 +105,7 @@ class CodeLine:
     @property
     def commandText(self):
         return self.__code
-    
+
     @property
     def syncMode(self):
         return self.__syncmode
@@ -107,22 +118,23 @@ class CodeLine:
         new_code = []
 
         line = kwargs.get("line", None) or session.getVariable("%line", "None")
-        raw  = kwargs.get("raw", None) or session.getVariable("%raw", "None")
+        raw = kwargs.get("raw", None) or session.getVariable("%raw", "None")
         wildcards = kwargs.get("wildcards", None)
 
         for item in self.code:
-            if len(item) == 0: continue
-            # %1~%9，特指捕获中的匹配内容
+            if len(item) == 0:
+                continue
+            # %1~%9, specifically refers to the matched content in captures
             if item in (f"%{i}" for i in range(1, 10)):
                 idx = int(item[1:])
                 if idx <= len(wildcards):
-                    item_val = wildcards[idx-1]
+                    item_val = wildcards[idx - 1]
                 else:
                     item_val = "None"
                 new_code.append(item_val)
                 new_code_str = new_code_str.replace(item, f"{item_val}", 1)
 
-            # 系统变量，%开头
+            # System variables, starting with %
             elif item == "%line":
                 new_code.append(line)
                 new_code_str = new_code_str.replace(item, f"{line}", 1)
@@ -136,7 +148,7 @@ class CodeLine:
                 new_code.append(item_val)
                 new_code_str = new_code_str.replace(item, f"{item_val}", 1)
 
-            # 非系统变量，@开头，在变量明前加@引用
+            # Non-system variables, starting with @, add @ before variable name to reference
             elif item[0] == "@":
                 item_val = session.getVariable(item[1:], "")
                 new_code.append(item_val)
@@ -147,24 +159,25 @@ class CodeLine:
 
         return new_code_str, new_code
 
-    async def async_execute(self, session, *args, **kwargs):           
+    async def async_execute(self, session, *args, **kwargs):
         return await session.exec_code_async(self, *args, **kwargs)
+
 
 class CodeBlock:
     """
-    PyMUD中可以执行的代码块，可以进行命令、别名检测，以及完成变量替代。
+    Executable code block in PyMUD, can perform command and alias detection, and complete variable substitution.
 
-    但一般情况下，不需要手动创建 CodeBlock 对象，而是在 SimpleTrigger, SimpleAlias 等类型中直接使用字符串进行创建。或者在命令行输入文本将自动创建。
+    In general, you don't need to manually create CodeBlock objects, but use strings directly in SimpleTrigger, SimpleAlias, and other types. Or text entered at the command line will automatically create them.
 
-    :param code: 代码块的代码本身。可以单行、多行、以及多层代码块
+    :param code: The code itself. Can be single line, multi-line, and multi-layer code blocks
     """
 
     @classmethod
     def create_block(cls, code: str) -> tuple:
-        "创建代码块，并返回对象自身"
-        #若block由{}包裹，则去掉大括号直接分解
+        "Create code block and return the object itself"
+        # If block is wrapped in {}, remove the braces and decompose directly
 
-        if (len(code) >= 2) and (code[0] == '{') and (code[-1] == '}'):
+        if (len(code) >= 2) and (code[0] == "{") and (code[-1] == "}"):
             code = code[1:-1]
 
         code_lines = []
@@ -178,7 +191,7 @@ class CodeBlock:
             elif ch == "}":
                 brace_count -= 1
                 if brace_count < 0:
-                    raise Exception("错误的代码块，大括号数量不匹配")
+                    raise Exception("Invalid code block, unmatched braces")
                 line += ch
             elif ch == ";":
                 if brace_count == 0:
@@ -228,19 +241,19 @@ class CodeBlock:
     @property
     def syncmode(self):
         """
-        只读属性: 同步模式。在创建代码块时，根据代码内容自动判定模式。
-        
-        该属性有四个可能值
-            - ``dontcare``: 同步异步均可，既不存在强制同步命令，也不存在强制异步命令
-            - ``sync``: 强制同步，仅存在强制同步模式命令及其他非同步异步命令
-            - ``async``: 强制异步，仅存在强制异步模式命令及其他非同步异步命令
-            - ``conflict``: 模式冲突，同时存在强制同步和强制异步命令
+        Read-only property: Synchronization mode. Automatically determined based on code content when creating the code block.
 
-        强制同步模式命令包括:
+        This property has four possible values:
+            - ``dontcare``: Both sync and async are acceptable, neither forced sync nor forced async commands exist
+            - ``sync``: Forced sync, only forced sync mode commands and other non-sync/async commands exist
+            - ``async``: Forced async, only forced async mode commands and other non-sync/async commands exist
+            - ``conflict``: Mode conflict, both forced sync and forced async commands exist simultaneously
+
+        Forced sync mode commands include:
             - #gag
             - #replace
 
-        强制异步模式命令包括:
+        Forced async mode commands include:
             - #wait
         """
 
@@ -248,14 +261,14 @@ class CodeBlock:
 
     def execute(self, session, *args, **kwargs):
         """
-        执行该 CodeBlock。执行前判断 syncmode。
-        - 仅当 syncmode 为 sync 时，才使用同步方式执行。
-        - 当 syncmode 为其他值时，均使用异步方式执行
-        - 当 syncmode 为 conflict 时，同步命令失效，并打印警告
+        Execute this CodeBlock. Check syncmode before execution.
+        - Only use synchronous execution when syncmode is sync.
+        - Use asynchronous execution for all other syncmode values
+        - When syncmode is conflict, sync commands are disabled and a warning is printed
 
-        :param session: 命令执行的会话实例
-        :param args: 兼容与扩展所需，用于变量替代及其他用途
-        :param kwargs: 兼容与扩展所需，用于变量替代及其他用途
+        :param session: Session instance for command execution
+        :param args: For compatibility and expansion, used for variable substitution and other purposes
+        :param kwargs: For compatibility and expansion, used for variable substitution and other purposes
         """
         sync = kwargs.get("sync", None)
         if sync == None:
@@ -264,7 +277,9 @@ class CodeBlock:
             elif self.syncmode == "sync":
                 sync = True
             elif self.syncmode == "conflict":
-                session.warning("该命令中同时存在强制同步命令和强制异步命令，将使用异步执行，同步命令将失效。")
+                session.warning(
+                    "This command contains both forced sync and forced async commands, async execution will be used, sync commands will be disabled."
+                )
                 sync = False
 
         if sync:
@@ -273,10 +288,10 @@ class CodeBlock:
                     code.execute(session, *args, **kwargs)
         else:
             session.create_task(self.async_execute(session, *args, **kwargs))
-        
+
     async def async_execute(self, session, *args, **kwargs):
         """
-        以异步方式执行该 CodeBlock。参数与 execute 相同。
+        Execute this CodeBlock asynchronously. Parameters are the same as execute.
         """
         result = None
         for code in self.codes:
@@ -289,70 +304,72 @@ class CodeBlock:
         session.clean_finished_tasks()
         return result
 
+
 class BaseObject:
     """
-    MUD会话支持的对象基类。
-    
-    :param session: 所属会话对象
-    :param args: 兼容与扩展所需
-    :param kwargs: 兼容与扩展所需
+    Base class for objects supported in MUD sessions.
 
-    kwargs支持的关键字:
-        :id: 唯一ID。不指定时，默认使用 __abbr__ + UniqueID 来生成
-        :group: 所属的组名。不指定时，默认使用空字符串
-        :enabled: 使能状态。不指定时，默认使用 True
-        :priority: 优先级，越小优先级越高。不指定时，默认使用 100
-        :timeout: 超时时间，单位为秒。不指定时，默认使用 10
-        :sync: 同步模式。不指定时，默认为 True
-        :oneShot: 仅执行一次标识。不指定时，默认为 False
-        :onSuccess: 成功时的同步回调函数。不指定时，默认使用 self.onSuccess
-        :onFailure: 失败时的同步回调函数。不指定时，默认使用 self.onFailure
-        :onTimeout: 超时时的同步回调函数。不指定时，默认使用 self.onTimeout
+    :param session: The session object this belongs to
+    :param args: For compatibility and expansion
+    :param kwargs: For compatibility and expansion
+
+    Keywords supported in kwargs:
+        :id: Unique ID. If not specified, defaults to __abbr__ + UniqueID
+        :group: Group name. If not specified, defaults to empty string
+        :enabled: Enabled state. If not specified, defaults to True
+        :priority: Priority, smaller value means higher priority. If not specified, defaults to 100
+        :timeout: Timeout in seconds. If not specified, defaults to 10
+        :sync: Sync mode. If not specified, defaults to True
+        :oneShot: One-time execution flag. If not specified, defaults to False
+        :onSuccess: Success callback function. If not specified, defaults to self.onSuccess
+        :onFailure: Failure callback function. If not specified, defaults to self.onFailure
+        :onTimeout: Timeout callback function. If not specified, defaults to self.onTimeout
     """
 
     State = namedtuple("State", ("result", "id", "line", "wildcards"))
 
-    NOTSET  = N = -1
+    NOTSET = N = -1
     FAILURE = F = 0
     SUCCESS = S = 1
     TIMEOUT = T = 2
-    ABORT   = A = 3
+    ABORT = A = 3
 
     __abbr__ = "obj"
-    "内部缩写代码前缀"
+    "Internal abbreviation code prefix"
 
     def __init__(self, session, *args, **kwargs):
         from .session import Session
+
         if isinstance(session, Session):
-            self.session    = session
+            self.session = session
         else:
-            assert("session must be an instance of class Session!")
-            
-        self._enabled   = True              # give a default value
-        self.log        = logging.getLogger(f"pymud.{self.__class__.__name__}")
-        self.id         = kwargs.get("id", session.getUniqueID(self.__class__.__abbr__))
-        self.group      = kwargs.get("group", "")                  # 组
-        self.enabled    = kwargs.get("enabled", True)              # 使能与否
-        self.priority   = kwargs.get("priority", 100)              # 优先级
-        self.timeout    = kwargs.get("timeout", 10)                # 超时时间
-        self.sync       = kwargs.get("sync", True)                 # 同步模式，默认
-        self.oneShot    = kwargs.get("oneShot", False)             # 单次执行，非默认
+            assert "session must be an instance of class Session!"
 
-        self.args       = args
-        self.kwarg      = kwargs
+        self._enabled = True  # give a default value
+        self.log = logging.getLogger(f"pymud.{self.__class__.__name__}")
+        self.id = kwargs.get("id", session.getUniqueID(self.__class__.__abbr__))
+        self.group = kwargs.get("group", "")  # Group
+        self.enabled = kwargs.get("enabled", True)  # Enabled or not
+        self.priority = kwargs.get("priority", 100)  # Priority
+        self.timeout = kwargs.get("timeout", 10)  # Timeout
+        self.sync = kwargs.get("sync", True)  # Sync mode, default
+        self.oneShot = kwargs.get("oneShot", False)  # One-time execution, not default
 
-        # 成功完成，失败完成，超时的处理函数(若有指定)，否则使用类的自定义函数
+        self.args = args
+        self.kwarg = kwargs
+
+        # Success, failure, timeout handler functions (if specified), otherwise use the class's custom functions
         self._onSuccess = kwargs.get("onSuccess", self.onSuccess)
         self._onFailure = kwargs.get("onFailure", self.onFailure)
         self._onTimeout = kwargs.get("onTimeout", self.onTimeout)
 
-        self.log.debug(f"对象实例 {self} 创建成功.")
+        self.log.debug(f"Object instance {self} created successfully.")
 
         self.session.addObject(self)
 
     @property
     def enabled(self):
-        "可读写属性，使能或取消使能本对象"
+        "Read-write property, enable or disable this object"
         return self._enabled
 
     @enabled.setter
@@ -360,37 +377,37 @@ class BaseObject:
         self._enabled = en
 
     def onSuccess(self, *args, **kwargs):
-        "成功后执行的默认回调函数"
-        self.log.debug(f"{self} 缺省成功回调函数被执行.")
+        "Default callback function executed after success"
+        self.log.debug(f"{self} default success callback function executed.")
 
     def onFailure(self, *args, **kwargs):
-        "失败后执行的默认回调函数"
-        self.log.debug(f"{self} 缺省失败回调函数被执行.")
+        "Default callback function executed after failure"
+        self.log.debug(f"{self} default failure callback function executed.")
 
     def onTimeout(self, *args, **kwargs):
-        "超时后执行的默认回调函数"
-        self.log.debug(f"{self} 缺省超时回调函数被执行.")
+        "Default callback function executed after timeout"
+        self.log.debug(f"{self} default timeout callback function executed.")
 
     def debug(self, msg):
-        "在logging中记录debug信息"
+        "Record debug information in logging"
         self.log.debug(msg)
 
     def info(self, msg, *args):
-        "若session存在，session中输出info；不存在则在logging中输出info"
+        "Output info in session if session exists; output info in logging if not"
         if self.session:
             self.session.info(msg, *args)
         else:
             self.log.info(msg)
 
     def warning(self, msg, *args):
-        "若session存在，session中输出warning；不存在则在logging中输出warning"
+        "Output warning in session if session exists; output warning in logging if not"
         if self.session:
             self.session.warning(msg, *args)
         else:
             self.log.warning(msg)
 
     def error(self, msg, *args):
-        "若session存在，session中输出error；同时在logging中输出error"
+        "Output error in session if session exists; simultaneously output error in logging"
         if self.session:
             self.session.error(msg, *args)
         else:
@@ -398,37 +415,39 @@ class BaseObject:
 
     def __repr__(self) -> str:
         return self.__detailed__()
-    
+
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled}'
+
 
 class GMCPTrigger(BaseObject):
     """
-    GMCP触发器 GMCPTrigger 类型，继承自 BaseObject。
+    GMCP Trigger class, inherits from BaseObject.
 
-    GMCP触发器处于基于 GMCP 协议的数据，其使用方法类似于 Trigger 对象
-    
-    但 GMCPTrigger 必定以指定name为触发，触发时，其值直接传递给对象本身
+    GMCP triggers process data based on the GMCP protocol, and their usage is similar to Trigger objects
 
-    :param session: 本对象所属的会话
-    :param name: 触发对应的 GMCP 的 name
+    But GMCPTrigger must be triggered by a specified name, and when triggered, its value is passed directly to the object itself
+
+    :param session: The session this object belongs to
+    :param name: The GMCP name corresponding to the trigger
     """
+
     def __init__(self, session, name, *args, **kwargs):
         self.event = asyncio.Event()
         self.value = None
-        super().__init__(session, id = name, *args, **kwargs)
+        super().__init__(session, id=name, *args, **kwargs)
 
     def __del__(self):
         self.reset()
 
     def reset(self):
-        "复位事件，用于async执行"
+        "Reset event, used for async execution"
         self.event.clear()
 
     async def triggered(self):
         """
-        异步触发的可等待函数。其使用方法和 Trigger.triggered() 类似，且参数与返回值均与之兼容。
+        Awaitable function for async triggering. Its usage is similar to Trigger.triggered(), and its parameters and return values are compatible with it.
         """
         self.reset()
         await self.event.wait()
@@ -438,12 +457,12 @@ class GMCPTrigger(BaseObject):
 
     def __call__(self, value) -> Any:
         try:
-            #import json
+            # import json
             value_exp = eval(value)
         except:
             value_exp = value
 
-        self.line  = value
+        self.line = value
         self.value = value_exp
 
         if callable(self._onSuccess):
@@ -451,40 +470,46 @@ class GMCPTrigger(BaseObject):
             self._onSuccess(self.id, value, value_exp)
 
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> name = "{self.id}" value = "{self.value}" {group}enabled = {self.enabled} '
-            
+
+
 class MatchObject(BaseObject):
     """
-    支持匹配内容的对象，包括Alias, Trigger, Command 等对象以及其子类对象。继承自 BaseObject
-    
-    :param session: 同 BaseObject , 本对象所属的会话
-    :param patterns: 用于匹配的模式。详见 patterns 属性
-    :param args: 兼容与扩展所需
-    :param kwargs: 兼容与扩展所需
+    Objects that support content matching, including Alias, Trigger, Command and their subclass objects. Inherits from BaseObject
 
-    MatchObject 新增了部分 kwargs 关键字，包括：
-        :ignoreCase: 忽略大小写，默认为 False
-        :isRegExp: 是否是正则表达式，默认为 True
-        :keepEval: 是否持续匹配，默认为 False
-        :raw: 是否匹配含有VT100 ANSI标记的原始数据，默认为 False
+    :param session: Same as BaseObject, the session this object belongs to
+    :param patterns: Patterns for matching. See patterns property for details
+    :param args: For compatibility and expansion
+    :param kwargs: For compatibility and expansion
+
+    MatchObject adds some new kwargs keywords, including:
+        :ignoreCase: Ignore case, default is False
+        :isRegExp: Whether it's a regular expression, default is True
+        :keepEval: Whether to continue matching, default is False
+        :raw: Whether to match raw data containing VT100 ANSI markers, default is False
     """
 
     __abbr__ = "mob"
+
     def __init__(self, session, patterns, *args, **kwargs):
-        self.ignoreCase    = kwargs.get("ignoreCase", False)          # 忽略大小写，非默认
-        self.isRegExp      = kwargs.get("isRegExp", True)             # 正则表达式，默认
-        self.expandVar     = kwargs.get("expandVar", True)            # 扩展变量（将变量用值替代），默认
-        self.keepEval      = kwargs.get("keepEval", False)            # 不中断，非默认
-        self.raw           = kwargs.get("raw", False)                 # 原始数据匹配。当原始数据匹配时，不对VT100指令进行解析
-        
+        self.ignoreCase = kwargs.get("ignoreCase", False)  # Ignore case, not default
+        self.isRegExp = kwargs.get("isRegExp", True)  # Regular expression, default
+        self.expandVar = kwargs.get(
+            "expandVar", True
+        )  # Expand variables (replace variables with values), default
+        self.keepEval = kwargs.get("keepEval", False)  # Don't interrupt, not default
+        self.raw = kwargs.get(
+            "raw", False
+        )  # Raw data matching. When matching raw data, VT100 instructions are not parsed
+
         self.wildcards = []
         self.lines = []
         self.event = asyncio.Event()
 
         self.patterns = patterns
 
-        super().__init__(session, patterns = patterns, *args, **kwargs)
+        super().__init__(session, patterns=patterns, *args, **kwargs)
 
     def __del__(self):
         pass
@@ -492,12 +517,12 @@ class MatchObject(BaseObject):
     @property
     def patterns(self):
         """
-        可读写属性， 本对象的匹配模式。该属性可以在运行时动态更改，改后即时生效。
+        Read-write property, matching patterns for this object. This property can be dynamically changed at runtime, effective immediately.
 
-        - 构造函数中的 patterns 用于指定初始的匹配模式。
-        - 该属性支持字符串和其他可迭代对象（如元组、列表）两种形式。
-            - 当为字符串时，使用单行匹配模式
-            - 当为可迭代对象时，使用多行匹配模式。多行的行数由可迭代对象所确定。
+        - The patterns in the constructor specify the initial matching patterns.
+        - This property supports both string and other iterable objects (such as tuples, lists) in two forms.
+            - When it's a string, single-line matching mode is used
+            - When it's an iterable object, multi-line matching mode is used. The number of lines in multi-line mode is determined by the iterable object.
         """
         return self._patterns
 
@@ -514,9 +539,12 @@ class MatchObject(BaseObject):
 
         if self.isRegExp:
             flag = 0
-            if self.ignoreCase: flag = re.I
+            if self.ignoreCase:
+                flag = re.I
             if not self.multiline:
-                self._regExp = re.compile(self.patterns, flag)   # 此处可考虑增加flags
+                self._regExp = re.compile(
+                    self.patterns, flag
+                )  # Consider adding flags here
             else:
                 self._regExps = []
                 for line in self.patterns:
@@ -526,25 +554,25 @@ class MatchObject(BaseObject):
                 self._mline = 0
 
     def reset(self):
-        "复位事件，用于async执行未等待结果时，对事件的复位。仅异步有效。"
+        "Reset event, used for async execution without waiting for results. Only effective for async."
         self.event.clear()
 
     def set(self):
-        "设置事件标记，可以用于人工强制触发，仅在异步触发器下生效。"
+        "Set event flag, can be used to manually force triggering, only effective for async triggers."
         self.event.set()
 
-    def match(self, line: str, docallback = True) -> BaseObject.State:
+    def match(self, line: str, docallback=True) -> BaseObject.State:
         """
-        匹配函数。由 Session 调用。
+        Matching function. Called by Session.
 
-        :param line: 匹配的数据行
-        :param docallback: 匹配成功后是否执行回调函数，默认为 True
+        :param line: Data line to match
+        :param docallback: Whether to execute callback function after successful match, default is True
 
-        :return: BaseObject.State 类型，一个包含 result, id, name, line, wildcards 的命名元组对象
+        :return: BaseObject.State type, a named tuple object containing result, id, name, line, wildcards
         """
         result = self.NOTSET
 
-        if not self.multiline:                              # 非多行
+        if not self.multiline:  # Not multi-line
             if self.isRegExp:
                 m = self._regExp.match(line)
                 if m:
@@ -556,17 +584,17 @@ class MatchObject(BaseObject):
                     self.lines.clear()
                     self.lines.append(line)
             else:
-                #if line.find(self.patterns) >= 0:
-                #if line == self.patterns:
+                # if line.find(self.patterns) >= 0:
+                # if line == self.patterns:
                 if self.patterns in line:
                     result = self.SUCCESS
                     self.lines.clear()
                     self.lines.append(line)
                     self.wildcards.clear()
 
-        else:                                               # 多行匹配情况
-            # multilines match. 多行匹配时，受限于行的捕获方式，必须一行一行来，设置状态标志进行处理。
-            if self._mline == 0:                            # 当尚未开始匹配时，匹配第1行
+        else:  # Multi-line matching case
+            # multilines match. For multi-line matching, limited by the way lines are captured, must go line by line, setting state flags for processing.
+            if self._mline == 0:  # When matching hasn't started yet, match the 1st line
                 m = self._regExps[0].match(line)
                 if m:
                     self.lines.clear()
@@ -574,7 +602,7 @@ class MatchObject(BaseObject):
                     self.wildcards.clear()
                     if len(m.groups()) > 0:
                         self.wildcards.extend(m.groups())
-                    self._mline = 1                         # 下一状态 （中间行）
+                    self._mline = 1  # Next state (middle line)
             elif (self._mline > 0) and (self._mline < self.linesToMatch - 1):
                 m = self._regExps[self._mline].match(line)
                 if m:
@@ -584,7 +612,7 @@ class MatchObject(BaseObject):
                     self._mline += 1
                 else:
                     self._mline = 0
-            elif self._mline == self.linesToMatch - 1:      # 最终行
+            elif self._mline == self.linesToMatch - 1:  # Final line
                 m = self._regExps[self._mline].match(line)
                 if m:
                     self.lines.append(line)
@@ -594,10 +622,12 @@ class MatchObject(BaseObject):
 
                 self._mline = 0
 
-        state = BaseObject.State(result, self.id, "\n".join(self.lines), tuple(self.wildcards))
+        state = BaseObject.State(
+            result, self.id, "\n".join(self.lines), tuple(self.wildcards)
+        )
 
-        # 采用回调方式执行的时候，执行函数回调（仅当self.sync和docallback均为真时才执行同步
-        # 当docallback为真时，是真正的进行匹配和触发，为false时，仅返回匹配结果，不实际触发
+        # When executing using the callback method, execute the function callback (only when both self.sync and docallback are true)
+        # When docallback is true, it's actually matching and triggering, when false, it only returns the match result without actually triggering
         if docallback:
             if self.sync:
                 if state.result == self.SUCCESS:
@@ -606,49 +636,51 @@ class MatchObject(BaseObject):
                     self._onFailure(state.id, state.line, state.wildcards)
                 elif state.result == self.TIMEOUT:
                     self._onTimeout(state.id, state.line, state.wildcards)
-            
+
             if state.result == self.SUCCESS:
                 self.event.set()
-                
+
         self.state = state
         return state
-    
+
     async def matched(self) -> BaseObject.State:
         """
-        匹配函数的异步模式，等待匹配成功之后才返回。返回值 BaseObject.state
-        
-        异步匹配模式用于 Trigger 的异步模式以及 Command 的匹配中。
+        Async mode of the match function, returns only after matching succeeds. Returns BaseObject.state
+
+        Async matching mode is used for Trigger's async mode and Command matching.
         """
-        # 等待，再复位
+        # Wait, then reset
         try:
             self.reset()
             await self.event.wait()
             self.reset()
         except Exception as e:
-            self.error(f"异步执行中遇到异常, {e}")
+            self.error(f"Exception encountered in async execution, {e}")
 
         return self.state
-    
+
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled} patterns = "{self.patterns}"'
+
 
 class Alias(MatchObject):
     """
-    别名 Alias 类型，继承自 MatchObject。
+    Alias type, inherits from MatchObject.
 
-    其内涵与 MatchObject 完全相同，仅对缩写进行了覆盖。
+    Its connotation is exactly the same as MatchObject, only the abbreviation is overridden.
     """
-    
+
     __abbr__ = "ali"
+
 
 class SimpleAlias(Alias):
     """
-    简单别名 SimpleAlias 类型，继承自 Alias, 包含了 Alias 的全部功能， 并使用 CodeBlock 对象创建了 onSuccess 的使用场景。
-    
-    :param session: 本对象所属的会话， 同 MatchObject
-    :param patterns: 匹配模式，同 MatchObject
-    :param code: str, 当匹配成功时执行的代码， 使用 CodeBlock 进行实现
+    SimpleAlias type, inherits from Alias, includes all functionality of Alias, and creates a use case for onSuccess using the CodeBlock object.
+
+    :param session: The session this object belongs to, same as MatchObject
+    :param patterns: Matching patterns, same as MatchObject
+    :param code: str, code to execute when matching succeeds, implemented using CodeBlock
     """
 
     def __init__(self, session, patterns, code, *args, **kwargs):
@@ -657,21 +689,22 @@ class SimpleAlias(Alias):
         super().__init__(session, patterns, *args, **kwargs)
 
     def onSuccess(self, id, line, wildcards):
-        "覆盖了基类的默认 onSuccess方法，使用 CodeBlock 执行构造函数中传入的 code 参数"
-        self._codeblock.execute(self.session, id = id, line = line, wildcards = wildcards)
+        "Overrides the default onSuccess method of the base class, executes the code parameter passed in the constructor using CodeBlock"
+        self._codeblock.execute(self.session, id=id, line=line, wildcards=wildcards)
 
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled} patterns = "{self.patterns}" code = "{self._code}"'
-    
+
     def __repr__(self) -> str:
         return self.__detailed__()
 
+
 class Trigger(MatchObject):
     """
-    触发器 Trigger 类型，继承自 MatchObject。
+    Trigger type, inherits from MatchObject.
 
-    其内涵与 MatchObject 完全相同，仅对缩写进行了覆盖，并增写了 triggered 异步方法。
+    Its connotation is exactly the same as MatchObject, only the abbreviation is overridden and an async triggered method is added.
     """
 
     __abbr__ = "tri"
@@ -682,9 +715,9 @@ class Trigger(MatchObject):
 
     async def triggered(self):
         """
-        异步触发的可等待函数。内部通过 MatchObject.matched 实现
+        Awaitable function for async triggering. Implemented internally through MatchObject.matched
 
-        差异在于对创建的 matched 任务进行了管理。
+        The difference is in the management of the created matched task.
         """
         if isinstance(self._task, asyncio.Task) and (not self._task.done()):
             self._task.cancel()
@@ -692,13 +725,14 @@ class Trigger(MatchObject):
         self._task = self.session.create_task(self.matched())
         return await self._task
 
+
 class SimpleTrigger(Trigger):
     """
-    简单别名 SimpleTrigger 类型，继承自 Trigger, 包含了 Trigger 的全部功能， 并使用 CodeBlock 对象创建了 onSuccess 的使用场景。
-    
-    :param session: 本对象所属的会话， 同 MatchObject
-    :param patterns: 匹配模式，同 MatchObject
-    :param code: str, 当匹配成功时执行的代码， 使用 CodeBlock 进行实现
+    SimpleTrigger type, inherits from Trigger, includes all functionality of Trigger, and creates a use case for onSuccess using the CodeBlock object.
+
+    :param session: The session this object belongs to, same as MatchObject
+    :param patterns: Matching patterns, same as MatchObject
+    :param code: str, code to execute when matching succeeds, implemented using CodeBlock
     """
 
     def __init__(self, session, patterns, code, *args, **kwargs):
@@ -707,67 +741,72 @@ class SimpleTrigger(Trigger):
         super().__init__(session, patterns, *args, **kwargs)
 
     def onSuccess(self, id, line, wildcards):
-        "覆盖了基类的默认 onSuccess方法，使用 CodeBlock 执行构造函数中传入的 code 参数"
-        
+        "Overrides the default onSuccess method of the base class, executes the code parameter passed in the constructor using CodeBlock"
+
         raw = self.session.getVariable("%raw")
-        self._codeblock.execute(self.session, id = id, line = line, raw = raw, wildcards = wildcards)
+        self._codeblock.execute(
+            self.session, id=id, line=line, raw=raw, wildcards=wildcards
+        )
 
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled} patterns = "{self.patterns}" code = "{self._code}"'
-    
+
     def __repr__(self) -> str:
         return self.__detailed__()
 
+
 class Command(MatchObject):
     """
-    命令 Command 类型，继承自 MatchObject。
-    命令是 PYMUD 的最大特色，它是一组归纳了同步/异步执行、等待响应、处理的集成对象。
-    要使用命令，不能直接使用 Command 类型，应总是继承并使用其子类，务必覆盖基类的 execute 方法。
+    Command type, inherits from MatchObject.
+    Commands are PyMUD's biggest feature, they are integrated objects that incorporate sync/async execution, response waiting, and processing.
+    To use commands, you cannot directly use the Command type, but should always inherit and use its subclasses, and must override the base class's execute method.
 
-    有关 Command 的使用帮助，请查看帮助页面
+    For help on using Command, please see the help page
 
-    :param session: 本对象所属的会话
-    :param patterns: 匹配模式
+    :param session: The session this object belongs to
+    :param patterns: Matching patterns
     """
+
     __abbr__ = "cmd"
+
     def __init__(self, session, patterns, *args, **kwargs):
-        super().__init__(session, patterns, sync = False, *args, **kwargs)
+        super().__init__(session, patterns, sync=False, *args, **kwargs)
         self._tasks = set()
 
     def __unload__(self):
         """
-        当从会话中移除任务时，会自动调用该函数。
-        可以将命令管理的各子类对象在此处清除。
-        该函数需要在子类中覆盖重写。
+        Automatically called when removing tasks from the session.
+        Can clear various subclass objects managed by the command here.
+        This function needs to be overridden in subclasses.
         """
         pass
 
     def unload(self):
         """
-        与__unload__方法相同，子类仅需覆盖一种方法就可以
+        Same as the __unload__ method, subclasses only need to override one method
         """
         pass
 
-    def create_task(self, coro, *args, name = None):
+    def create_task(self, coro, *args, name=None):
         """
-        创建并管理任务。由 Command 创建的任务，同时也被 Session 所管理。
-        其内部是调用 asyncio.create_task 进行任务创建。
+        Create and manage tasks. Tasks created by Command are also managed by Session.
+        Internally, it calls asyncio.create_task to create tasks.
 
-        :param coro: 任务包含的协程或可等待对象
-        :param name: 任务名称， Python 3.10 才支持的参数
+        :param coro: Coroutine or awaitable object contained in the task
+        :param name: Task name, parameter supported only in Python 3.10
         """
         task = self.session.create_task(coro, *args, name)
         task.add_done_callback(self._tasks.discard)
         self._tasks.add(task)
         return task
 
-    def remove_task(self, task: asyncio.Task, msg = None):
+    def remove_task(self, task: asyncio.Task, msg=None):
         """
-        取消任务并从管理任务清单中移除。由 Command 取消和移除的任务，同时也被 Session 所取消和移除。
+        Cancel tasks and remove them from the task management list. Tasks cancelled and removed by Command are also cancelled and removed by Session.
 
-        :param task: 要取消的任务
-        :param msg: 取消任务时提供的消息， Python 3.10 才支持的参数
+        :param task: The task to cancel
+        :param msg: Message provided when cancelling the task, parameter supported only in Python 3.10
         """
 
         result = self.session.remove_task(task, msg)
@@ -775,10 +814,10 @@ class Command(MatchObject):
         # if task in self._tasks:
         #     self._tasks.remove(task)
         return result
-    
+
     def reset(self):
         """
-        复位命令，并取消和清除所有本对象管理的任务。
+        Reset command, cancel and clear all tasks managed by this object.
         """
 
         super().reset()
@@ -789,28 +828,29 @@ class Command(MatchObject):
 
     async def execute(self, cmd, *args, **kwargs):
         """
-        命令调用的入口函数。该函数由 Session 进行自动调用。
-        通过 ``Session.exec`` 系列方法调用的命令，最终是执行该命令的 execute 方法。
+        Entry function for command calls. This function is automatically called by Session.
+        Commands called through the ``Session.exec`` series of methods ultimately execute this method of the command.
 
-        子类必须实现并覆盖该方法。
+        Subclasses must implement and override this method.
         """
         self.reset()
         return
 
+
 class SimpleCommand(Command):
     """
-    对命令的基本应用进行了基础封装的一种可以直接使用的命令类型，继承自 Command。
+    A command type that provides basic encapsulation for basic applications of commands, inherits from Command.
 
-    SimpleCommand 并不能理解为 “简单” 命令，因为其使用并不简单。
-    只有在熟练使用 Command 建立自己的命令子类之后，对于某些场景的应用才可以简化代码使用 SimpleCommand 类型。
+    SimpleCommand should not be understood as a "simple" command, as its use is not simple.
+    Only after becoming proficient in using Command to establish your own command subclasses, can you simplify code using the SimpleCommand type for certain scenarios.
 
-    :param session: 本对象所属的会话
-    :param patterns: 匹配模式
-    :param succ_tri: 代表成功的响应触发器清单，可以为单个触发器，或一组触发器，必须指定
+    :param session: The session this object belongs to
+    :param patterns: Matching patterns
+    :param succ_tri: Response trigger list representing success, can be a single trigger or a group of triggers, must be specified
 
-    kwargs关键字参数特殊支持：
-        :fail_tri: 代表失败的响应触发器清单，可以为单个触发器，或一组触发器，可以为 None
-        :retry_tri: 代表重试的响应触发器清单，可以为单个触发器，或一组触发器，可以为 None
+    Special support for kwargs keyword parameters:
+        :fail_tri: Response trigger list representing failure, can be a single trigger or a group of triggers, can be None
+        :retry_tri: Response trigger list representing retry, can be a single trigger or a group of triggers, can be None
     """
 
     MAX_RETRY = 20
@@ -846,14 +886,14 @@ class SimpleCommand(Command):
 
     async def execute(self, cmd, *args, **kwargs):
         """
-        覆盖基类的 execute 方法, SimpleCommand 的默认实现。
+        Overrides the execute method of the base class, SimpleCommand's default implementation.
 
-        :param cmd: 执行时输入的实际指令
+        :param cmd: The actual command entered during execution
 
-        kwargs接受指定以下参数，在执行中进行一次调用:
-            :onSuccess: 成功时的回调
-            :onFailure: 失败时的回调
-            :onTimeout: 超时时的回调
+        kwargs accepts the following parameters, used once during execution:
+            :onSuccess: Callback for success
+            :onFailure: Callback for failure
+            :onTimeout: Callback for timeout
         """
         self.reset()
         # 0. check command
@@ -874,14 +914,16 @@ class SimpleCommand(Command):
             for tr in self._retry_tris:
                 tr.reset()
                 tasklist.append(self.session.create_task(tr.triggered()))
-            
+
             await asyncio.sleep(0.1)
             self.session.writeline(cmd)
-            
-            done, pending = await asyncio.wait(tasklist, timeout = self.timeout, return_when = "FIRST_COMPLETED")
-            
+
+            done, pending = await asyncio.wait(
+                tasklist, timeout=self.timeout, return_when="FIRST_COMPLETED"
+            )
+
             tasks_done = list(done)
-            
+
             tasks_pending = list(pending)
             for t in tasks_pending:
                 t.cancel()
@@ -894,7 +936,7 @@ class SimpleCommand(Command):
                 if name in (tri.id for tri in self._succ_tris):
                     result = self.SUCCESS
                     break
-                    
+
                 elif name in (tri.id for tri in self._fail_tris):
                     result = self.FAILURE
                     break
@@ -912,38 +954,40 @@ class SimpleCommand(Command):
                 break
 
         if result == self.SUCCESS:
-            self._onSuccess(name = self.id, cmd = cmd, line = line, wildcards = wildcards)
+            self._onSuccess(name=self.id, cmd=cmd, line=line, wildcards=wildcards)
             _outer_onSuccess = kwargs.get("onSuccess", None)
             if callable(_outer_onSuccess):
-                _outer_onSuccess(name = self.id, cmd = cmd, line = line, wildcards = wildcards)
+                _outer_onSuccess(name=self.id, cmd=cmd, line=line, wildcards=wildcards)
 
         elif result == self.FAILURE:
-            self._onFailure(name = self.id, cmd = cmd, line = line, wildcards = wildcards)
+            self._onFailure(name=self.id, cmd=cmd, line=line, wildcards=wildcards)
             _outer_onFailure = kwargs.get("onFailure", None)
             if callable(_outer_onFailure):
-                _outer_onFailure(name = self.id, cmd = cmd, line = line, wildcards = wildcards)
+                _outer_onFailure(name=self.id, cmd=cmd, line=line, wildcards=wildcards)
 
         elif result == self.TIMEOUT:
-            self._onTimeout(name = self.id, cmd = cmd, timeout = self.timeout)
+            self._onTimeout(name=self.id, cmd=cmd, timeout=self.timeout)
             _outer_onTimeout = kwargs.get("onTimeout", None)
             if callable(_outer_onTimeout):
-                _outer_onTimeout(name = self.id, cmd = cmd, timeout = self.timeout)
+                _outer_onTimeout(name=self.id, cmd=cmd, timeout=self.timeout)
 
         return result
 
+
 class Timer(BaseObject):
     """
-    定时器 Timer 类型，继承自 MatchObject。PYMUD 支持同时任意多个定时器。
+    Timer type, inherits from MatchObject. PyMUD supports any number of timers simultaneously.
 
-    :param session: 对象所属会话
-    
-    Timer 中使用的 kwargs 均继承自 BaseObject，包括:
-        - id: 标识
-        - group: 组名
-        - enabled: 使能状态
-        - timeout: 定时时间
-        - onSuccess: 定时到期执行的函数
+    :param session: The session this object belongs to
+
+    The kwargs used in Timer are all inherited from BaseObject, including:
+        - id: Identifier
+        - group: Group name
+        - enabled: Enabled status
+        - timeout: Timer duration
+        - onSuccess: Function to execute when timer expires
     """
+
     __abbr__ = "ti"
 
     def __init__(self, session, *args, **kwargs):
@@ -955,7 +999,7 @@ class Timer(BaseObject):
         self.reset()
 
     def startTimer(self):
-        "启动定时器"
+        "Start the timer"
         if not isinstance(self._task, asyncio.Task):
             self._halt = False
             self._task = asyncio.create_task(self.onTimerTask())
@@ -963,7 +1007,7 @@ class Timer(BaseObject):
         asyncio.ensure_future(self._task)
 
     async def onTimerTask(self):
-        "定时任务的调用方法，脚本中无需调用"
+        "Timer task call method, no need to call in scripts"
 
         while self._enabled:
             await asyncio.sleep(self.timeout)
@@ -974,9 +1018,8 @@ class Timer(BaseObject):
             if self.oneShot or self._halt:
                 break
 
-
     def reset(self):
-        "复位定时器，清除所创建的定时任务"
+        "Reset timer, clear created timer tasks"
         try:
             self._halt = True
             if isinstance(self._task, asyncio.Task) and (not self._task.done()):
@@ -988,9 +1031,9 @@ class Timer(BaseObject):
 
     @property
     def enabled(self):
-        "可读写属性，定时器使能状态"
+        "Read-write property, timer enabled status"
         return self._enabled
-    
+
     @enabled.setter
     def enabled(self, en: bool):
         self._enabled = en
@@ -1000,29 +1043,30 @@ class Timer(BaseObject):
             self.startTimer()
 
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled} timeout = {self.timeout}'
-    
+
     def __repr__(self) -> str:
         return self.__detailed__()
-            
+
+
 class SimpleTimer(Timer):
     """
-    简单定时器 SimpleTimer 类型，继承自 Timer, 包含了 Timer 的全部功能， 并使用 CodeBlock 对象创建了 onSuccess 的使用场景。
-    
-    :param session: 本对象所属的会话， 同 MatchObject
-    :param code: str, 当定时任务到期时执行的代码， 使用 CodeBlock 实现
+    SimpleTimer type, inherits from Timer, includes all functionality of Timer, and creates a use case for onSuccess using the CodeBlock object.
+
+    :param session: The session this object belongs to, same as MatchObject
+    :param code: str, code to execute when the timer task expires, implemented using CodeBlock
     """
+
     def __init__(self, session, code, *args, **kwargs):
         self._code = code
         self._codeblock = CodeBlock(code)
         super().__init__(session, *args, **kwargs)
 
     def onSuccess(self, id):
-        "覆盖了基类的默认 onSuccess方法，使用 CodeBlock 执行构造函数中传入的 code 参数"
-        self._codeblock.execute(self.session, id = id)
+        "Overrides the default onSuccess method of the base class, executes the code parameter passed in the constructor using CodeBlock"
+        self._codeblock.execute(self.session, id=id)
 
     def __detailed__(self) -> str:
-        group = f'group = "{self.group}" ' if self.group else ''
+        group = f'group = "{self.group}" ' if self.group else ""
         return f'<{self.__class__.__name__}> id = "{self.id}" {group}enabled = {self.enabled} timeout = {self.timeout} code = "{self._code}"'
-

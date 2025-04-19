@@ -1,22 +1,58 @@
-# general things to ignore
-build/
-
-dist/
-*.egg-info/
-*.egg
-*.py[cod]
+# Python
 __pycache__/
+*.py[cod]
 *.so
-*~
-
-# due to using tox and pytest
+*.egg
+*.egg-info/
+.pytest_cache
+*.pkl
 .tox
 .cache
 
-# debug is my debug-venv-dir
-debug
+# Virtual Environments
+.venv
+venv
 debug/
 
-# docs build is build test directory
-docs/build
+# Build and Distribution
+build/
+dist/
+**/build/
+.cdk.staging
+staticfiles/
+mediafiles/
+
+# Documentation
 docs/build/
+
+# IDE and Editor Files
+.vscode/
+*~
+*.swp
+.cursor/
+
+# System Files
+**/.DS_Store
+
+# Node.js
+**/node_modules/
+package-lock.json
+
+# Environment Variables and Secrets
+**/*.env
+*.csr
+*.crt
+*.key
+
+# Database
+*.dump
+
+# Logs and Temporary Files
+celerybeat-schedule*
+
+# Backups
+prod_backup_*
+
+# Misc
+notebooks/
+repomix-output.*
